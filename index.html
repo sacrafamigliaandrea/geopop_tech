@@ -165,6 +165,16 @@ header.top{
 /* ============ SCHERMATA VIDEO + ATTIVITÀ ============ */
 #playScreen{display:none}
 .play-grid{display:grid;grid-template-columns:1.15fr .95fr;gap:24px;align-items:start}
+@media (min-width:981px){
+  /* video fermo a sinistra, attività a destra con scroll indipendente */
+  .video-col{position:sticky;top:20px;align-self:start}
+  .activity{max-height:calc(100vh - 40px);overflow-y:auto;
+    scrollbar-width:thin;scrollbar-color:var(--line) transparent}
+  .activity::-webkit-scrollbar{width:10px}
+  .activity::-webkit-scrollbar-track{background:transparent}
+  .activity::-webkit-scrollbar-thumb{background:var(--line);border-radius:999px;border:2px solid var(--card)}
+  .activity::-webkit-scrollbar-thumb:hover{background:var(--ciano-scuro)}
+}
 @media (max-width:980px){.play-grid{grid-template-columns:1fr}}
 
 .video-col .cat{
@@ -731,11 +741,57 @@ function fillInitial(){
   for(let i=0;i<VIDEOS.length;i++) strip.appendChild(makeItem(VIDEOS[i]));
 }
 
+/* ---- Effetto sonoro slot machine (sintetizzato, nessun file esterno) ---- */
+let audioCtx = null;
+function ensureAudio(){
+  try{
+    if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if(audioCtx.state === 'suspended') audioCtx.resume();
+  }catch(e){ audioCtx = null; }
+  return audioCtx;
+}
+function slotTick(ctx, t, freq, gain){
+  const o = ctx.createOscillator(), g = ctx.createGain();
+  o.type = 'square';
+  o.frequency.setValueAtTime(freq, t);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(gain, t + 0.001);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.045);
+  o.connect(g).connect(ctx.destination);
+  o.start(t); o.stop(t + 0.05);
+}
+function slotChime(ctx, t){
+  [[659.25, 0], [987.77, 0.12]].forEach(([f, dt])=>{
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(f, t + dt);
+    g.gain.setValueAtTime(0.0001, t + dt);
+    g.gain.linearRampToValueAtTime(0.22, t + dt + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dt + 0.5);
+    o.connect(g).connect(ctx.destination);
+    o.start(t + dt); o.stop(t + dt + 0.55);
+  });
+}
+function playSlotSound(durationSec){
+  const ctx = ensureAudio();
+  if(!ctx) return;
+  const start = ctx.currentTime + 0.02;
+  const N = 44;
+  for(let i=0;i<N;i++){
+    const x = i/(N-1);
+    const tt = Math.pow(x, 2.2) * durationSec;   // tick fitti all'avvio, radi mentre rallenta
+    const freq = 1500 - (tt/durationSec)*620 + (i%2 ? 90 : 0);
+    slotTick(ctx, start + tt, freq, 0.09);
+  }
+  slotChime(ctx, start + durationSec + 0.02);     // "din" quando si ferma
+}
+
 function spin(){
   if(spinning) return;
   spinning = true;
   spinBtn.disabled = true;
   spinLabel.textContent = 'Estrazione…';
+  playSlotSound(3.4);
 
   // scegli target diverso dall'ultimo
   let target;
