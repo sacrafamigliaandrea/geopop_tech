@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Estrai &amp; Impara — Slot Geopop</title>
+<title>Geopop Tech — Random videolezioni</title>
 <link rel="icon" href="logo.png" />
 <link rel="apple-touch-icon" href="logo.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -179,7 +179,52 @@ header.top{
   position:relative;width:100%;aspect-ratio:16/9;border-radius:16px;overflow:hidden;
   background:#000;border:1px solid var(--line);box-shadow:var(--ombra);
 }
-.player-frame iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+.player-frame #ytHolder{position:absolute;inset:0}
+/* l'iframe YouTube è reso NON interagibile: niente hover-titolo, "Guarda su YouTube",
+   condividi, ingranaggio impostazioni, schermo intero. I comandi sono i nostri, qui sotto. */
+.player-frame iframe{position:absolute;inset:0;width:100%;height:100%;border:0;pointer-events:none}
+/* poster opaco nostro: nasconde l'anteprima YouTube (titolo, avatar, "Guarda su YouTube", condividi) finché non parte */
+.v-poster{position:absolute;inset:0;z-index:1;background:#000 center/cover no-repeat}
+.v-poster.hide{display:none}
+/* strato che cattura i clic (play/pausa) al posto di YouTube */
+.v-guard{position:absolute;inset:0;z-index:2;cursor:pointer;display:flex;align-items:center;justify-content:center;background:transparent}
+.v-big{
+  width:80px;height:80px;border-radius:50%;border:none;cursor:pointer;
+  background:rgba(255,212,0,.96);color:var(--navy-900);
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 12px 32px rgba(0,0,0,.45);transition:transform .12s,opacity .22s;
+}
+.v-big svg{width:36px;height:36px;margin-left:3px}
+.v-big:hover{transform:scale(1.06)}
+.v-guard.playing .v-big{opacity:0;pointer-events:none;transform:scale(.8)}
+.v-end{
+  position:absolute;inset:0;z-index:3;display:none;align-items:center;justify-content:center;
+  background:rgba(10,19,48,.985);
+}
+.v-end.show{display:flex}
+.v-replay{
+  display:inline-flex;align-items:center;gap:10px;cursor:pointer;
+  font-family:'Lexend',sans-serif;font-weight:800;font-size:17px;color:var(--navy-900);
+  background:var(--giallo);border:none;border-radius:12px;padding:13px 20px;box-shadow:0 8px 20px rgba(255,212,0,.3);
+}
+.v-replay svg{width:22px;height:22px}
+.v-bar{
+  position:absolute;left:0;right:0;bottom:0;z-index:4;
+  display:flex;align-items:center;gap:12px;padding:14px 14px 13px;
+  background:linear-gradient(0deg,rgba(6,12,34,.94),rgba(6,12,34,.55) 60%,transparent);
+  opacity:0;transition:opacity .2s ease;
+}
+.player-frame:hover .v-bar,.v-bar.stick{opacity:1}
+.v-bar button{background:none;border:none;cursor:pointer;color:#fff;display:flex;align-items:center;justify-content:center;padding:4px}
+.v-bar button svg{width:24px;height:24px}
+.v-bar button:hover{color:var(--giallo)}
+.v-t{font-family:'Lexend',sans-serif;font-weight:700;font-size:13px;color:#dfe8ff;min-width:42px;text-align:center;font-variant-numeric:tabular-nums}
+.v-seek{
+  -webkit-appearance:none;appearance:none;flex:1;height:6px;border-radius:999px;cursor:pointer;
+  background:linear-gradient(90deg,var(--giallo) 0%,rgba(255,255,255,.25) 0%);
+}
+.v-seek::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:var(--giallo);border:2px solid #fff;cursor:pointer}
+.v-seek::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--giallo);border:none;cursor:pointer}
 .again-btn{
   margin-top:18px;cursor:pointer;
   font-family:'Lexend',sans-serif;font-weight:800;font-size:16px;
@@ -296,8 +341,7 @@ footer.credits b{color:var(--giallo)}
         </svg>
       </div>
       <div class="txt">
-        <b>Estrai &amp; Impara</b>
-        <span>Videopillole in stile Geopop · cittadinanza digitale</span>
+        <b>Geopop Tech</b>
       </div>
     </div>
     <div class="kicker">Scuola Sacra Famiglia</div>
@@ -306,8 +350,7 @@ footer.credits b{color:var(--giallo)}
   <!-- ============ SCHERMATA SLOT ============ -->
   <section id="slotScreen">
     <div class="hero-head">
-      <h1>Il caso sceglie il video, <span class="hl">a te la sfida di capirlo</span></h1>
-      <p>Tredici pillole scientifiche. Un'estrazione ne propone una: guardala fino in fondo e metti alla prova ciò che hai capito con l'attività a fianco.</p>
+      <h1>Random <span class="hl">videolezioni</span></h1>
     </div>
 
     <div class="machine">
@@ -734,31 +777,152 @@ const playScreen = document.getElementById('playScreen');
 const activityPanel = document.getElementById('activityPanel');
 let ytPlayer = null;
 let apiReady = false;
+let pendingId = null;
+let pollTimer = null;
+let scrubbing = false;
+let vidDur = 0;
 
-window.onYouTubeIframeAPIReady = function(){ apiReady = true; };
+window.onYouTubeIframeAPIReady = function(){
+  apiReady = true;
+  if(pendingId){ const p = pendingId; pendingId = null; buildPlayer(p); }
+};
 
+function fmtTime(s){
+  s = Math.max(0, Math.floor(s||0));
+  const m = Math.floor(s/60), ss = String(s%60).padStart(2,'0');
+  return m+':'+ss;
+}
+function paintSeek(pct){
+  const seek = document.getElementById('vSeek');
+  if(seek) seek.style.background =
+    'linear-gradient(90deg,var(--giallo) '+pct+'%,rgba(255,255,255,.25) '+pct+'%)';
+}
+function stopPoll(){ if(pollTimer){ clearInterval(pollTimer); pollTimer = null; } }
+function startPoll(){
+  stopPoll();
+  pollTimer = setInterval(()=>{
+    if(scrubbing || !ytPlayer || !ytPlayer.getCurrentTime) return;
+    if(!vidDur) vidDur = ytPlayer.getDuration() || 0;
+    const t = ytPlayer.getCurrentTime() || 0;
+    const seek = document.getElementById('vSeek');
+    const cur = document.getElementById('vCur');
+    if(seek && vidDur){ const p = t/vidDur*1000; seek.value = p; paintSeek(p/10); }
+    if(cur) cur.textContent = fmtTime(t);
+  }, 250);
+}
+
+// Player YouTube "senza distrattori": controls=0 (niente ingranaggio/fullscreen/logo),
+// iframe non cliccabile, comandi ricostruiti da noi (play/pausa, barra, audio).
 function buildPlayer(id){
   const holder = document.getElementById('ytHolder');
-  holder.innerHTML = '';
-  const mount = document.createElement('div');
-  mount.id = 'ytPlayerMount';
-  holder.appendChild(mount);
-  const opts = {
+  stopPoll(); vidDur = 0; scrubbing = false;
+  holder.innerHTML =
+    '<div id="ytPlayerMount"></div>'+
+    '<div class="v-poster" id="vPoster" style="background-image:url(https://i.ytimg.com/vi/'+id+'/hqdefault.jpg)"></div>'+
+    '<div class="v-guard" id="vGuard"><button class="v-big" id="vBig" aria-label="Riproduci il video">'+
+      '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button></div>'+
+    '<div class="v-end" id="vEnd"><button class="v-replay" id="vReplay">'+
+      '<svg viewBox="0 0 24 24" fill="none"><path d="M4 12a8 8 0 1 1 2.3 5.6M4 12V7M4 12h5" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Rivedi il video</button></div>'+
+    '<div class="v-bar" id="vBar">'+
+      '<button id="vPP" aria-label="Play o pausa"><svg id="vPPIcon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button>'+
+      '<span class="v-t" id="vCur">0:00</span>'+
+      '<input type="range" class="v-seek" id="vSeek" min="0" max="1000" value="0" step="1" aria-label="Barra di avanzamento del video">'+
+      '<span class="v-t" id="vDur">0:00</span>'+
+      '<button id="vMute" aria-label="Attiva o disattiva audio"><svg id="vMuteIcon" viewBox="0 0 24 24" fill="none"><path d="M4 9v6h3.5L9 19V5L7.5 9H4Z" fill="currentColor"/><path d="M14 8.5a4 4 0 0 1 0 7M16.5 6a7 7 0 0 1 0 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>'+
+    '</div>';
+
+  if(!(apiReady && window.YT && YT.Player)){ pendingId = id; return; }
+  pendingId = null;
+  ytPlayer = new YT.Player('ytPlayerMount', {
     videoId: id,
     playerVars:{
-      rel:0, playsinline:1, modestbranding:1, fs:0,
-      cc_load_policy:1, cc_lang_pref:'it', hl:'it',
-      iv_load_policy:3, color:'white'
-    }
-  };
-  if(apiReady && window.YT && YT.Player){
-    ytPlayer = new YT.Player('ytPlayerMount', opts);
-  } else {
-    // fallback: iframe diretto senza fullscreen (no allowfullscreen)
-    holder.innerHTML =
-      '<iframe src="https://www.youtube.com/embed/'+id+
-      '?rel=0&playsinline=1&enablejsapi=1&modestbranding=1&fs=0&cc_load_policy=1&cc_lang_pref=it&hl=it&iv_load_policy=3&color=white" '+
-      'allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture"></iframe>';
+      controls:0, rel:0, fs:0, disablekb:1, modestbranding:1,
+      iv_load_policy:3, playsinline:1, cc_load_policy:1, cc_lang_pref:'it',
+      hl:'it', color:'white'
+    },
+    events:{ onReady:onYtReady, onStateChange:onYtState }
+  });
+}
+
+function togglePlay(){
+  if(!ytPlayer || !ytPlayer.getPlayerState) return;
+  const S = YT.PlayerState;
+  if(ytPlayer.getPlayerState() === S.PLAYING) ytPlayer.pauseVideo();
+  else ytPlayer.playVideo();
+}
+function setMuteIcon(muted){
+  const el = document.getElementById('vMuteIcon');
+  if(!el) return;
+  el.innerHTML = muted
+    ? '<path d="M4 9v6h3.5L9 19V5L7.5 9H4Z" fill="currentColor"/><path d="M15 9l5 6M20 9l-5 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>'
+    : '<path d="M4 9v6h3.5L9 19V5L7.5 9H4Z" fill="currentColor"/><path d="M14 8.5a4 4 0 0 1 0 7M16.5 6a7 7 0 0 1 0 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>';
+}
+
+function onYtReady(){
+  vidDur = ytPlayer.getDuration() || 0;
+  const dEl = document.getElementById('vDur');
+  if(dEl) dEl.textContent = fmtTime(vidDur);
+  const guard = document.getElementById('vGuard');
+  const big = document.getElementById('vBig');
+  const pp = document.getElementById('vPP');
+  const mute = document.getElementById('vMute');
+  const replay = document.getElementById('vReplay');
+  const seek = document.getElementById('vSeek');
+  guard.addEventListener('click', togglePlay);
+  big.addEventListener('click', (e)=>{ e.stopPropagation(); togglePlay(); });
+  pp.addEventListener('click', togglePlay);
+  mute.addEventListener('click', ()=>{
+    if(ytPlayer.isMuted()){ ytPlayer.unMute(); setMuteIcon(false); }
+    else { ytPlayer.mute(); setMuteIcon(true); }
+  });
+  replay.addEventListener('click', (e)=>{
+    e.stopPropagation();
+    ytPlayer.seekTo(0, true); ytPlayer.playVideo();
+    document.getElementById('vEnd').classList.remove('show');
+  });
+  const beginScrub = ()=>{ scrubbing = true; };
+  seek.addEventListener('mousedown', beginScrub);
+  seek.addEventListener('touchstart', beginScrub, {passive:true});
+  seek.addEventListener('input', ()=>{
+    if(!vidDur) vidDur = ytPlayer.getDuration() || 0;
+    const t = seek.value/1000*vidDur;
+    document.getElementById('vCur').textContent = fmtTime(t);
+    paintSeek(seek.value/10);
+  });
+  seek.addEventListener('change', ()=>{
+    const t = seek.value/1000*vidDur;
+    ytPlayer.seekTo(t, true);
+    scrubbing = false;
+  });
+}
+
+function onYtState(e){
+  const guard = document.getElementById('vGuard');
+  const ppIcon = document.getElementById('vPPIcon');
+  const end = document.getElementById('vEnd');
+  const bar = document.getElementById('vBar');
+  if(!guard) return;
+  const S = YT.PlayerState;
+  if(e.data === S.PLAYING){
+    guard.classList.add('playing');
+    const poster = document.getElementById('vPoster');
+    if(poster) poster.classList.add('hide');
+    if(bar) bar.classList.remove('stick');
+    ppIcon.innerHTML = '<path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"/>';
+    end.classList.remove('show');
+    if(!vidDur){ vidDur = ytPlayer.getDuration() || 0; document.getElementById('vDur').textContent = fmtTime(vidDur); }
+    startPoll();
+  } else if(e.data === S.PAUSED){
+    guard.classList.remove('playing');
+    if(bar) bar.classList.add('stick');
+    ppIcon.innerHTML = '<path d="M8 5v14l11-7z"/>';
+    stopPoll();
+  } else if(e.data === S.ENDED){
+    guard.classList.remove('playing');
+    if(bar) bar.classList.add('stick');
+    ppIcon.innerHTML = '<path d="M8 5v14l11-7z"/>';
+    end.classList.add('show');
+    stopPoll();
   }
 }
 
@@ -891,6 +1055,7 @@ function openVideo(index){
 
 document.getElementById('againBtn').addEventListener('click', ()=>{
   // ferma il video
+  stopPoll(); vidDur = 0; scrubbing = false;
   try{ if(ytPlayer && ytPlayer.stopVideo) ytPlayer.stopVideo(); }catch(e){}
   document.getElementById('ytHolder').innerHTML = '';
   ytPlayer = null;
