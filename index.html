@@ -229,12 +229,14 @@ header.top{
 .v-bar button svg{width:24px;height:24px}
 .v-bar button:hover{color:var(--giallo)}
 .v-t{font-family:'Lexend',sans-serif;font-weight:700;font-size:13px;color:#dfe8ff;min-width:42px;text-align:center;font-variant-numeric:tabular-nums}
+/* barra = solo indicatore di avanzamento: NON trascinabile (no skip della timeline) */
 .v-seek{
-  -webkit-appearance:none;appearance:none;flex:1;height:6px;border-radius:999px;cursor:pointer;
+  -webkit-appearance:none;appearance:none;flex:1;height:6px;border-radius:999px;
+  cursor:default;pointer-events:none;
   background:linear-gradient(90deg,var(--giallo) 0%,rgba(255,255,255,.25) 0%);
 }
-.v-seek::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:var(--giallo);border:2px solid #fff;cursor:pointer}
-.v-seek::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--giallo);border:none;cursor:pointer}
+.v-seek::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--giallo);border:2px solid #fff}
+.v-seek::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--giallo);border:none}
 .again-btn{
   margin-top:18px;cursor:pointer;
   font-family:'Lexend',sans-serif;font-weight:800;font-size:16px;
@@ -245,6 +247,16 @@ header.top{
 .again-btn:hover{filter:brightness(1.05)}
 .again-btn:active{transform:translateY(2px)}
 .again-btn svg{width:20px;height:20px}
+/* ---- Verifica bloccata finché la videolezione non è finita ---- */
+.quiz-lock{
+  display:flex;align-items:center;gap:10px;margin:6px 0 14px;
+  background:rgba(255,176,32,.12);border:1px solid rgba(255,176,32,.4);border-radius:12px;
+  padding:11px 13px;font-size:15px;color:var(--testo);
+}
+.quiz-lock svg{width:20px;height:20px;flex:0 0 auto;color:var(--ambra)}
+.quiz-lock.done{background:rgba(47,191,113,.13);border-color:rgba(47,191,113,.4)}
+.quiz-lock.done svg{color:var(--verde)}
+.quiz-wrap.locked{opacity:.5;pointer-events:none;filter:saturate(.55);user-select:none}
 
 /* ---- Pannello attività ---- */
 .activity{
@@ -793,7 +805,7 @@ function spin(){
   spinLabel.textContent = 'Estrazione…';
   playSlotSound(3.4);
 
-  // scegli target diverso dall'ultimo
+  // estrazione libera e casuale, solo diversa dall'ultima estratta
   let target;
   do { target = Math.floor(Math.random()*VIDEOS.length); }
   while(VIDEOS.length>1 && target===lastIndex);
@@ -864,6 +876,8 @@ function startPoll(){
     const cur = document.getElementById('vCur');
     if(seek && vidDur){ const p = t/vidDur*1000; seek.value = p; paintSeek(p/10); }
     if(cur) cur.textContent = fmtTime(t);
+    // visione (quasi) completa → sblocca la verifica (fallback se ENDED non scatta)
+    if(vidDur && t >= vidDur - 1.5) unlockQuiz();
   }, 250);
 }
 
@@ -882,7 +896,7 @@ function buildPlayer(id){
     '<div class="v-bar" id="vBar">'+
       '<button id="vPP" aria-label="Play o pausa"><svg id="vPPIcon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button>'+
       '<span class="v-t" id="vCur">0:00</span>'+
-      '<input type="range" class="v-seek" id="vSeek" min="0" max="1000" value="0" step="1" aria-label="Barra di avanzamento del video">'+
+      '<input type="range" class="v-seek" id="vSeek" min="0" max="1000" value="0" step="1" tabindex="-1" aria-label="Avanzamento del video (non modificabile)" aria-readonly="true">'+
       '<span class="v-t" id="vDur">0:00</span>'+
       '<button id="vMute" aria-label="Attiva o disattiva audio"><svg id="vMuteIcon" viewBox="0 0 24 24" fill="none"><path d="M4 9v6h3.5L9 19V5L7.5 9H4Z" fill="currentColor"/><path d="M14 8.5a4 4 0 0 1 0 7M16.5 6a7 7 0 0 1 0 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>'+
     '</div>';
@@ -923,7 +937,6 @@ function onYtReady(){
   const pp = document.getElementById('vPP');
   const mute = document.getElementById('vMute');
   const replay = document.getElementById('vReplay');
-  const seek = document.getElementById('vSeek');
   guard.addEventListener('click', togglePlay);
   big.addEventListener('click', (e)=>{ e.stopPropagation(); togglePlay(); });
   pp.addEventListener('click', togglePlay);
@@ -936,20 +949,7 @@ function onYtReady(){
     ytPlayer.seekTo(0, true); ytPlayer.playVideo();
     document.getElementById('vEnd').classList.remove('show');
   });
-  const beginScrub = ()=>{ scrubbing = true; };
-  seek.addEventListener('mousedown', beginScrub);
-  seek.addEventListener('touchstart', beginScrub, {passive:true});
-  seek.addEventListener('input', ()=>{
-    if(!vidDur) vidDur = ytPlayer.getDuration() || 0;
-    const t = seek.value/1000*vidDur;
-    document.getElementById('vCur').textContent = fmtTime(t);
-    paintSeek(seek.value/10);
-  });
-  seek.addEventListener('change', ()=>{
-    const t = seek.value/1000*vidDur;
-    ytPlayer.seekTo(t, true);
-    scrubbing = false;
-  });
+  // Nessun listener sulla barra: la timeline NON è trascinabile (no skip).
 }
 
 function onYtState(e){
@@ -979,6 +979,7 @@ function onYtState(e){
     ppIcon.innerHTML = '<path d="M8 5v14l11-7z"/>';
     end.classList.add('show');
     stopPoll();
+    unlockQuiz();               // visione completa → verifica sbloccata
   }
 }
 
@@ -1014,11 +1015,17 @@ function renderActivity(v){
     '</div>'+
     '<div class="a-block">'+
       '<div class="a-label"><span class="n">3</span>Verifica quello che hai capito</div>'+
-      '<div class="quiz-progress"><div class="qp-bar"><div class="qp-fill" id="qpFill"></div></div><span class="qp-txt" id="qpTxt">0/'+v.quiz.length+'</span></div>'+
-      quizHtml+
-      '<div class="score-badge" id="scoreBadge">'+
-        '<svg class="medal" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="9" r="6" stroke="currentColor" stroke-width="2"/><path d="M8.5 14.5 7 22l5-3 5 3-1.5-7.5" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9.5 9l1.7 1.7L15 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'+
-        '<div><b id="scoreTxt"></b><small id="scoreSub"></small></div>'+
+      '<div class="quiz-lock" id="quizLock">'+
+        '<svg viewBox="0 0 24 24" fill="none"><path d="M6 10V8a6 6 0 0 1 12 0v2M5 10h14v9a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-9Z" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>'+
+        '<span>Guarda la videolezione fino in fondo per sbloccare la verifica.</span>'+
+      '</div>'+
+      '<div class="quiz-wrap locked" id="quizWrap">'+
+        '<div class="quiz-progress"><div class="qp-bar"><div class="qp-fill" id="qpFill"></div></div><span class="qp-txt" id="qpTxt">0/'+v.quiz.length+'</span></div>'+
+        quizHtml+
+        '<div class="score-badge" id="scoreBadge">'+
+          '<svg class="medal" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="9" r="6" stroke="currentColor" stroke-width="2"/><path d="M8.5 14.5 7 22l5-3 5 3-1.5-7.5" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M9.5 9l1.7 1.7L15 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'+
+          '<div><b id="scoreTxt"></b><small id="scoreSub"></small></div>'+
+        '</div>'+
       '</div>'+
     '</div>'+
     '<div class="a-block">'+
@@ -1094,6 +1101,18 @@ function renderActivity(v){
       }
     });
   });
+}
+
+// Sblocca la verifica: si può rispondere solo dopo aver guardato il video fino in fondo
+function unlockQuiz(){
+  const w = document.getElementById('quizWrap');
+  const l = document.getElementById('quizLock');
+  if(w) w.classList.remove('locked');
+  if(l){
+    l.classList.add('done');
+    l.innerHTML = '<svg viewBox="0 0 24 24" fill="none"><path d="M4 12l5 5L20 6" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>'+
+      '<span>Videolezione conclusa: ora puoi fare la verifica.</span>';
+  }
 }
 
 function openVideo(index){
